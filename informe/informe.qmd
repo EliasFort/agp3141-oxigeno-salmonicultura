@@ -1,0 +1,288 @@
+---
+title: "Oxígeno disuelto y mortalidad de salmones en Los Lagos"
+subtitle: "Exploración con Quarto del proyecto final · AGP3141"
+author: "Elías Fort Abufón"
+date: "2026-11-07"
+lang: es
+format:
+  html:
+    toc: true
+    toc-title: "Contenido"
+    toc-location: left
+    number-sections: true
+    code-fold: true
+    code-summary: "Ver código"
+    embed-resources: true
+    theme: cosmo
+    fig-width: 9
+    fig-height: 4.5
+execute:
+  warning: false
+jupyter: python3
+---
+
+```{python}
+#| label: setup
+#| include: false
+from pathlib import Path
+
+import numpy as np
+import pandas as pd
+import plotly.express as px
+import plotly.graph_objects as go
+import plotly.io as pio
+
+pio.renderers.default = "notebook"  # incrusta plotly.js en el HTML (no depende de internet)
+from IPython.display import Markdown
+
+RAIZ = Path("..")
+BRUTOS = RAIZ / "datos" / "brutos"
+PROCESADOS = RAIZ / "datos" / "procesados"
+
+# Mismos rangos que 01-eda.py y 04-diccionario-validacion.py
+RANGOS = {
+    "temp_agua_sup": (4, 20), "temp_agua_prof": (4, 20),
+    "oxigeno_mgl_sup": (0.01, 20), "oxigeno_mgl_prof": (0.01, 20),
+}
+BOYAS = {  # código: (comuna, zona)
+    "ACS1": ("Cochamó", "Estuario de Reloncaví"),
+    "ACS17A": ("Hualaihué", "Fiordo Comau, Hornopirén"),
+    "ACS16": ("Chaitén", "Golfo de Ancud, costa continental"),
+    "ACS10A": ("Puqueldón", "Chiloé central"),
+    "ACS11": ("Queilén", "Sur de Chiloé"),
+}
+COORD = {"ACS1": (-41.6034, -72.3266), "ACS17A": (-42.2872, -72.4633),
+         "ACS16": (-42.3557, -72.7814), "ACS10A": (-42.6457, -73.5394),
+         "ACS11": (-42.9221, -73.5880)}
+COLORES = {"ACS1": "#2a78d6", "ACS17A": "#eb6834", "ACS16": "#1baf7a",
+           "ACS10A": "#eda100", "ACS11": "#e87ba4"}
+ESTACION = {12: "Verano", 1: "Verano", 2: "Verano", 3: "Otoño", 4: "Otoño", 5: "Otoño",
+            6: "Invierno", 7: "Invierno", 8: "Invierno",
+            9: "Primavera", 10: "Primavera", 11: "Primavera"}
+ORDEN_EST = ["Verano", "Otoño", "Invierno", "Primavera"]
+UMBRAL = 5.0
+PLANTILLA = dict(template="simple_white", font=dict(family="Inter, Arial", size=13),
+                 margin=dict(l=10, r=10, t=40, b=10), hoverlabel=dict(bgcolor="white"))
+
+
+def leer_boya(codigo):
+    x = pd.read_csv(BRUTOS / f"ifop_{codigo.lower()}_horario.csv", parse_dates=["fecha_hora_utc"])
+    x = x.set_index("fecha_hora_utc")
+    for col, (lo, hi) in RANGOS.items():
+        x.loc[(x[col] < lo) | (x[col] > hi), col] = np.nan
+    x.index = x.index.tz_convert("America/Santiago")
+    if codigo == "ACS17A":  # primeros 19 días: artefactos de instalación (ver 03-modelos-por-boya.py)
+        x = x[x.index >= x.index.min() + pd.Timedelta(days=19)]
+    x["boya"] = codigo
+    x["estacion"] = pd.Categorical(x.index.month.map(ESTACION), ORDEN_EST, ordered=True)
+    return x
+
+
+horario = pd.concat([leer_boya(b) for b in BOYAS])
+cruce = pd.read_csv(PROCESADOS / "cruce_mensual_boya_comuna.csv", parse_dates=["fecha"])
+corr = pd.read_csv(PROCESADOS / "correlaciones_boya_mortalidad.csv")
+```
+
+::: {.callout-note appearance="simple"}
+## Pregunta del proyecto
+¿Qué condiciones del agua anteceden a los episodios de mortalidad de salmones en Los Lagos? Este documento junta en un solo lugar los datos, el código y los tres hallazgos. Cada figura se genera al renderizar, así que si cambian los datos, cambia el informe.
+:::
+
+# Datos
+
+Se usan dos fuentes:
+
+- **Boyas del IFOP** (sistema de monitoreo de las Agrupaciones de Concesiones de Salmonicultura): promedios horarios de temperatura y oxígeno disuelto, en superficie y en profundidad, para las 5 boyas de Los Lagos.
+- **Sernapesca** (solicitud de transparencia AH010T0009768): mortalidad semanal de salmónidos por comuna y causa (2017 a 2026) y existencias mensuales por comuna.
+
+Como Sernapesca entregó los datos por comuna, cada boya se asigna a la comuna donde está instalada (@fig-mapa).
+
+```{python}
+#| label: fig-mapa
+#| fig-cap: "Ubicación de las boyas del IFOP. Pasa el mouse sobre cada punto para ver su comuna."
+resumen = (horario.groupby("boya")
+           .agg(desde=("oxigeno_mgl_sup", lambda s: s.dropna().index.min()),
+                horas=("oxigeno_mgl_sup", "count"))
+           .reindex(BOYAS))
+mapa = pd.DataFrame([{"boya": b, "comuna": c, "zona": z, "lat": COORD[b][0], "lon": COORD[b][1],
+                      "desde": f"{resumen.loc[b, 'desde']:%b %Y}"} for b, (c, z) in BOYAS.items()])
+fig = px.scatter_map(mapa, lat="lat", lon="lon", color="boya", color_discrete_map=COLORES,
+                     hover_name="boya", hover_data={"comuna": True, "zona": True, "desde": True,
+                                                    "lat": False, "lon": False, "boya": False},
+                     zoom=6.6, center=dict(lat=-42.3, lon=-72.95), height=430,
+                     map_style="open-street-map")
+fig.update_traces(marker=dict(size=14))
+fig.update_layout(**PLANTILLA, legend_title_text="")
+fig.show()
+```
+
+```{python}
+#| label: tbl-boyas
+#| tbl-cap: "Boyas, comuna asignada y horas con datos válidos de oxígeno superficial."
+tabla = pd.DataFrame({
+    "Boya": list(BOYAS),
+    "Comuna": [c for c, _ in BOYAS.values()],
+    "Zona": [z for _, z in BOYAS.values()],
+    "Datos desde": [f"{d:%d-%m-%Y}" for d in resumen.desde],
+    "Horas válidas": [f"{h:,}".replace(",", ".") for h in resumen.horas],
+})
+Markdown(tabla.to_markdown(index=False))
+```
+
+# Hallazgo 1: dónde y cuándo baja el oxígeno
+
+```{python}
+#| include: false
+pct_hipoxia = (horario.dropna(subset=["oxigeno_mgl_prof"])
+               .groupby("boya").oxigeno_mgl_prof.apply(lambda s: (s < UMBRAL).mean() * 100))
+inv_acs1 = horario[(horario.boya == "ACS1") & (horario.estacion == "Invierno")].oxigeno_mgl_prof.mean()
+```
+
+El oxígeno en profundidad es lo que más cambia entre boyas. En Reloncaví (ACS1) estuvo bajo `{python} f"{UMBRAL:.0f}"` mg/L el `{python} f"{pct_hipoxia['ACS1']:.0f}"` % de las horas medidas, y en Comau (ACS17A) el `{python} f"{pct_hipoxia['ACS17A']:.0f}"` %. En las dos boyas de Chiloé eso prácticamente no ocurre. Además, el oxígeno baja en otoño e invierno, no en verano: en invierno ACS1 promedia `{python} f"{inv_acs1:.1f}".replace(".", ",")` mg/L en profundidad.
+
+```{python}
+#| label: fig-estaciones
+#| fig-cap: "Oxígeno disuelto promedio por estación. La línea punteada marca el umbral de hipoxia (5 mg/L)."
+est = (horario.groupby(["boya", "estacion"], observed=True)[["oxigeno_mgl_sup", "oxigeno_mgl_prof"]]
+       .mean().reset_index()
+       .melt(id_vars=["boya", "estacion"], var_name="capa", value_name="oxigeno"))
+est["capa"] = est.capa.map({"oxigeno_mgl_sup": "Superficie", "oxigeno_mgl_prof": "Profundidad"})
+fig = px.line(est, x="estacion", y="oxigeno", color="boya", facet_col="capa", markers=True,
+              color_discrete_map=COLORES, category_orders={"boya": list(BOYAS), "estacion": ORDEN_EST,
+                                                           "capa": ["Superficie", "Profundidad"]},
+              labels={"estacion": "", "oxigeno": "Oxígeno (mg/L)", "boya": ""}, height=400,
+              facet_col_spacing=0.08)
+fig.add_hline(y=UMBRAL, line_dash="dot", line_color="#52514e")
+fig.for_each_annotation(lambda a: a.update(text=a.text.split("=")[-1]))
+fig.update_traces(line_width=2, marker_size=8, hovertemplate="%{y:.1f} mg/L")
+fig.update_layout(**PLANTILLA, hovermode="x unified")
+fig.show()
+```
+
+# Hallazgo 2: la temperatura no lo explica todo
+
+```{python}
+#| include: false
+def r2(g):
+    d = g[["temp_agua_prof", "oxigeno_mgl_prof"]].dropna()
+    return np.corrcoef(d.temp_agua_prof, d.oxigeno_mgl_prof)[0, 1] ** 2 if len(d) > 100 else np.nan
+
+r2_boya = horario.groupby("boya").apply(r2).reindex(BOYAS)
+```
+
+El agua más cálida retiene menos oxígeno, pero esa relación solo se ve con claridad en Reloncaví. Ahí la temperatura explica el `{python} f"{r2_boya['ACS1']*100:.0f}"` % de la variación del oxígeno en profundidad. En las otras cuatro boyas explica menos del `{python} f"{np.ceil(r2_boya.drop('ACS1').max()*100):.0f}"` %, así que el oxígeno bajo depende de algo más que el calor, como la estratificación del agua o la entrada de agua dulce. Cada pestaña muestra una boya (@fig-temp-oxigeno).
+
+```{python}
+#| include: false
+def grafico_dispersion(boya):
+    d = horario[horario.boya == boya].dropna(subset=["temp_agua_prof", "oxigeno_mgl_prof"])
+    d = d.sample(min(len(d), 4000), random_state=1)  # muestra para que el HTML no pese demasiado
+    a, b = np.polyfit(d.temp_agua_prof, d.oxigeno_mgl_prof, 1)
+    xs = np.linspace(d.temp_agua_prof.min(), d.temp_agua_prof.max(), 50)
+    fig = go.Figure()
+    fig.add_scatter(x=d.temp_agua_prof, y=d.oxigeno_mgl_prof, mode="markers",
+                    marker=dict(color=COLORES[boya], size=5, opacity=0.35), name="horas",
+                    hovertemplate="%{x:.1f} °C · %{y:.1f} mg/L<extra></extra>")
+    fig.add_scatter(x=xs, y=a * xs + b, mode="lines", line=dict(color="#0b0b0b", width=2),
+                    name=f"recta, R² = {r2_boya[boya]:.2f}", hoverinfo="skip")
+    fig.add_hline(y=UMBRAL, line_dash="dot", line_color="#52514e")
+    fig.update_layout(**PLANTILLA, height=360, xaxis_title="Temperatura en profundidad (°C)",
+                      yaxis_title="Oxígeno en profundidad (mg/L)",
+                      legend=dict(orientation="h", y=1.08, x=0))
+    return fig
+```
+
+::: {#fig-temp-oxigeno}
+
+:::: {.panel-tabset}
+
+## ACS1 · Cochamó
+```{python}
+#| echo: false
+grafico_dispersion("ACS1").show()
+```
+
+## ACS17A · Hualaihué
+```{python}
+#| echo: false
+grafico_dispersion("ACS17A").show()
+```
+
+## ACS16 · Chaitén
+```{python}
+#| echo: false
+grafico_dispersion("ACS16").show()
+```
+
+## ACS10A · Puqueldón
+```{python}
+#| echo: false
+grafico_dispersion("ACS10A").show()
+```
+
+## ACS11 · Queilén
+```{python}
+#| echo: false
+grafico_dispersion("ACS11").show()
+```
+
+::::
+
+Temperatura vs. oxígeno en profundidad (muestra de hasta 4.000 horas por boya).
+:::
+
+# Hallazgo 3: oxígeno bajo y mortalidad
+
+La tasa de mortalidad se calcula como los peces muertos por causa *Ambiental* en el mes, divididos por las existencias de la comuna ese mes.
+
+```{python}
+#| include: false
+def rho(boya):
+    c = corr[(corr.boya == boya) & (corr.variable == "oxigeno_prof") & (corr.tasa == "tasa_ambiental")].iloc[0]
+    return f"ρ = {c.rho:+.2f} (p = {c.p:.3f})".replace(".", ",").replace("+", "").replace("-", "−")
+
+g1 = cruce[cruce.boya == "ACS1"].set_index("fecha")
+pico = g1.tasa_ambiental.idxmax()
+```
+
+En 2026 el oxígeno profundo de Reloncaví cayó a su mínimo y la mortalidad ambiental de Cochamó llegó a `{python} f"{g1.tasa_ambiental.max():.2f}".replace(".", ",")` % en `{python} ["enero","febrero","marzo","abril","mayo","junio","julio","agosto","septiembre","octubre","noviembre","diciembre"][pico.month-1]`, cuando lo habitual es menos de 0,05 % (@fig-serie). En las tres boyas continentales, los meses con menos oxígeno profundo tienen más mortalidad (ACS17A: `{python} rho("ACS17A")`; ACS16: `{python} rho("ACS16")`; ACS1: `{python} rho("ACS1")`). En Chiloé no aparece esa relación.
+
+```{python}
+#| label: fig-serie
+#| fig-cap: "Oxígeno en profundidad (arriba) y mortalidad por causa ambiental (abajo), promedios mensuales. Usa la leyenda para mostrar u ocultar boyas."
+from plotly.subplots import make_subplots
+
+fig = make_subplots(rows=2, cols=1, shared_xaxes=True, vertical_spacing=0.08)
+for boya in BOYAS:
+    g = cruce[cruce.boya == boya].set_index("fecha").sort_index()
+    meses = pd.date_range(g.index.min(), g.index.max(), freq="MS") + pd.Timedelta(days=14)
+    g = g.reindex(meses)
+    visible = True if boya in ("ACS1", "ACS17A") else "legendonly"
+    kw = dict(mode="lines+markers", line=dict(color=COLORES[boya], width=2), marker=dict(size=6),
+              legendgroup=boya, visible=visible)
+    fig.add_scatter(x=g.index, y=g.oxigeno_prof, name=f"{boya} · {BOYAS[boya][0]}", row=1, col=1,
+                    hovertemplate="%{y:.2f} mg/L", **kw)
+    fig.add_scatter(x=g.index, y=g.tasa_ambiental, name=boya, showlegend=False, row=2, col=1,
+                    hovertemplate="%{y:.2f} %", **kw)
+fig.add_hline(y=UMBRAL, line_dash="dot", line_color="#52514e", row=1, col=1)
+fig.update_yaxes(title_text="O₂ profundo (mg/L)", row=1, col=1)
+fig.update_yaxes(title_text="Mortalidad ambiental (%)", row=2, col=1)
+fig.update_layout(**PLANTILLA, height=600, hovermode="x unified",
+                  legend=dict(orientation="h", yanchor="bottom", y=1.02, x=0))
+fig.update_layout(margin=dict(t=90))
+ticks = pd.date_range("2023-01-01", "2026-12-01", freq="6MS")
+fig.update_xaxes(tickvals=ticks, ticktext=[("ene " if t.month == 1 else "jul ") + str(t.year) for t in ticks])
+fig.show()
+```
+
+::: {.callout-warning}
+## Limitaciones
+- Hay pocos meses por boya: entre 17 y 42.
+- Una boya representa a toda su comuna, aunque los centros de cultivo estén a varios kilómetros.
+- La causa "Ambiental" de Sernapesca no separa la falta de oxígeno de las floraciones de algas.
+- Es una asociación entre variables, no una prueba de que el oxígeno cause la mortalidad.
+:::
+
+# Reproducibilidad
+
+Este informe se genera con `quarto render informe/informe.qmd` desde la raíz del repositorio, después de correr `scripts/05-sernapesca.py` y `scripts/06-cruce-boyas-mortalidad.py`. Requiere Python con pandas, numpy, plotly, tabulate y jupyter.
