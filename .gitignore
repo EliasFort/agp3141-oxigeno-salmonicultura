@@ -1,0 +1,3 @@
+# Archivos grandes: el Excel de mortalidad de Sernapesca pesa ~200 MB (GitHub acepta hasta 100 MB).
+# Los datos agregados quedan en datos/procesados/; el original se pide con la solicitud AH010T0009768.
+datos/brutos/sernapesca/Datos_MORT_SAI_*.xlsx
