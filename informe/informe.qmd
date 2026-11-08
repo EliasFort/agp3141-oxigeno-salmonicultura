@@ -36,14 +36,8 @@ pio.renderers.default = "notebook"  # incrusta plotly.js en el HTML (no depende 
 from IPython.display import Markdown
 
 RAIZ = Path("..")
-BRUTOS = RAIZ / "datos" / "brutos"
 PROCESADOS = RAIZ / "datos" / "procesados"
 
-# Mismos rangos que 01-eda.py y 04-diccionario-validacion.py
-RANGOS = {
-    "temp_agua_sup": (4, 20), "temp_agua_prof": (4, 20),
-    "oxigeno_mgl_sup": (0.01, 20), "oxigeno_mgl_prof": (0.01, 20),
-}
 BOYAS = {  # código: (comuna, zona)
     "ACS1": ("Cochamó", "Estuario de Reloncaví"),
     "ACS17A": ("Hualaihué", "Fiordo Comau, Hornopirén"),
@@ -65,20 +59,16 @@ PLANTILLA = dict(template="simple_white", font=dict(family="Inter, Arial", size=
                  margin=dict(l=10, r=10, t=40, b=10), hoverlabel=dict(bgcolor="white"))
 
 
-def leer_boya(codigo):
-    x = pd.read_csv(BRUTOS / f"ifop_{codigo.lower()}_horario.csv", parse_dates=["fecha_hora_utc"])
-    x = x.set_index("fecha_hora_utc")
-    for col, (lo, hi) in RANGOS.items():
-        x.loc[(x[col] < lo) | (x[col] > hi), col] = np.nan
-    x.index = x.index.tz_convert("America/Santiago")
-    if codigo == "ACS17A":  # primeros 19 días: artefactos de instalación (ver 03-modelos-por-boya.py)
-        x = x[x.index >= x.index.min() + pd.Timedelta(days=19)]
-    x["boya"] = codigo
-    x["estacion"] = pd.Categorical(x.index.month.map(ESTACION), ORDEN_EST, ordered=True)
-    return x
-
-
-horario = pd.concat([leer_boya(b) for b in BOYAS])
+# Datos ya validados por 02-limpieza-boyas.py (rangos y excepciones documentados ahí)
+horario = pd.read_csv(PROCESADOS / "boyas_horario_validado.csv", parse_dates=["fecha_hora_utc"])
+horario = horario.set_index("fecha_hora_utc")
+horario.index = horario.index.tz_convert("America/Santiago")
+diario = pd.read_csv(PROCESADOS / "boyas_diario.csv", parse_dates=["fecha"])
+# ACS17A: los primeros 19 días son artefactos de instalación (ver README)
+inicio_17a = horario[horario.boya == "ACS17A"].index.min() + pd.Timedelta(days=19)
+horario = horario[(horario.boya != "ACS17A") | (horario.index >= inicio_17a)]
+diario = diario[(diario.boya != "ACS17A") | (diario.fecha >= inicio_17a.tz_localize(None).normalize())]
+horario["estacion"] = pd.Categorical(horario.index.month.map(ESTACION), ORDEN_EST, ordered=True)
 cruce = pd.read_csv(PROCESADOS / "cruce_mensual_boya_comuna.csv", parse_dates=["fecha"])
 corr = pd.read_csv(PROCESADOS / "correlaciones_boya_mortalidad.csv")
 ```
@@ -165,12 +155,12 @@ fig.show()
 #| include: false
 def r2(g):
     d = g[["temp_agua_prof", "oxigeno_mgl_prof"]].dropna()
-    return np.corrcoef(d.temp_agua_prof, d.oxigeno_mgl_prof)[0, 1] ** 2 if len(d) > 100 else np.nan
+    return np.corrcoef(d.temp_agua_prof, d.oxigeno_mgl_prof)[0, 1] ** 2 if len(d) > 30 else np.nan
 
-r2_boya = horario.groupby("boya").apply(r2).reindex(BOYAS)
+r2_boya = diario.groupby("boya").apply(r2).reindex(BOYAS)  # promedios diarios, como 03-modelos-por-boya.py
 ```
 
-El agua más cálida retiene menos oxígeno, pero esa relación solo se ve con claridad en Reloncaví. Ahí la temperatura explica el `{python} f"{r2_boya['ACS1']*100:.0f}"` % de la variación del oxígeno en profundidad. En las otras cuatro boyas explica menos del `{python} f"{np.ceil(r2_boya.drop('ACS1').max()*100):.0f}"` %, así que el oxígeno bajo depende de algo más que el calor, como la estratificación del agua o la entrada de agua dulce. Cada pestaña muestra una boya (@fig-temp-oxigeno).
+El agua más cálida retiene menos oxígeno, pero esa relación solo se ve con claridad en Reloncaví. Ahí la temperatura explica el `{python} f"{r2_boya['ACS1']*100:.0f}"` % de la variación diaria del oxígeno en profundidad. En las otras cuatro boyas explica menos del `{python} f"{np.ceil(r2_boya.drop('ACS1').max()*100):.0f}"` %, así que el oxígeno bajo depende de algo más que el calor, como la estratificación del agua o la entrada de agua dulce. Cada pestaña muestra una boya (@fig-temp-oxigeno).
 
 ```{python}
 #| include: false
@@ -285,4 +275,4 @@ fig.show()
 
 # Reproducibilidad
 
-Este informe se genera con `quarto render informe/informe.qmd` desde la raíz del repositorio, después de correr `scripts/05-sernapesca.py` y `scripts/06-cruce-boyas-mortalidad.py`. Requiere Python con pandas, numpy, plotly, tabulate y jupyter.
+Este informe se genera con `quarto render informe/informe.qmd` desde la raíz del repositorio, después de correr los scripts `02` a `06` de la carpeta `scripts/`. Requiere Python con pandas, numpy, plotly, tabulate y jupyter.

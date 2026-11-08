@@ -17,7 +17,7 @@ Supuestos y limitaciones:
   - Solo se usan meses con al menos 15 días de datos de oxígeno superficial.
   - Con 17 a 42 meses por boya, las correlaciones son exploratorias.
 
-Requiere haber corrido 05-sernapesca.py. Uso: python scripts/06-cruce-boyas-mortalidad.py
+Requiere haber corrido 02-limpieza-boyas.py y 05-sernapesca.py. Uso: python scripts/06-cruce-boyas-mortalidad.py
 Requiere: pandas, numpy, matplotlib, scipy.
 """
 
@@ -30,7 +30,6 @@ import pandas as pd
 from scipy.stats import spearmanr
 
 RAIZ = Path(__file__).resolve().parent.parent
-BRUTOS = RAIZ / "datos" / "brutos"
 PROCESADOS = RAIZ / "datos" / "procesados"
 CARPETA_FIG = RAIZ / "figuras"
 
@@ -44,11 +43,6 @@ BOYA_COMUNA = {
 }
 UMBRAL_HIPOXIA = 5.0  # mg/L; bajo este nivel el salmón empieza a estresarse
 
-RANGOS = {  # los mismos de 01-eda.py
-    "temp_agua_sup": (4, 20), "temp_agua_prof": (4, 20),
-    "oxigeno_mgl_sup": (0.01, 20), "oxigeno_mgl_prof": (0.01, 20),
-    "salinidad_sup": (15, 40), "salinidad_prof": (15, 40),
-}
 
 AZUL, NARANJO = "#2a78d6", "#eb6834"
 TINTA, TINTA_2, GRILLA, FONDO = "#0b0b0b", "#52514e", "#e1e0d9", "#fcfcfb"
@@ -100,12 +94,13 @@ def pct_bajo_umbral(s):
     return (s < UMBRAL_HIPOXIA).mean() * 100 if len(s) else np.nan
 
 
+# Datos horarios ya validados por 02-limpieza-boyas.py
+horario = pd.read_csv(PROCESADOS / "boyas_horario_validado.csv", parse_dates=["fecha_hora_utc"])
+horario["boya"] = horario.boya.str.lower()
+
 boyas = []
 for boya, comuna in BOYA_COMUNA.items():
-    x = pd.read_csv(BRUTOS / f"ifop_{boya}_horario.csv", parse_dates=["fecha_hora_utc"])
-    x = x.set_index("fecha_hora_utc")
-    for col, (lo, hi) in RANGOS.items():
-        x.loc[(x[col] < lo) | (x[col] > hi), col] = np.nan
+    x = horario[horario.boya == boya].set_index("fecha_hora_utc")
     x.index = x.index.tz_convert("America/Santiago")
     g = x.groupby([x.index.year, x.index.month])
     r = pd.DataFrame({
@@ -145,7 +140,7 @@ corr.to_csv(PROCESADOS / "correlaciones_boya_mortalidad.csv", index=False)
 print(corr[corr.tasa == "tasa_ambiental"].pivot(index="boya", columns="variable", values="rho"))
 
 # ---------------------------------------------------------------------------
-# 4. Figura 05: serie de tiempo en las dos boyas con hipoxia profunda
+# 4. Figura 06: serie de tiempo en las dos boyas con hipoxia profunda
 # ---------------------------------------------------------------------------
 SERIES = [("ACS1", "Cochamó (ACS1, Reloncaví)", AZUL),
           ("ACS17A", "Hualaihué (ACS17A, Comau)", NARANJO)]
@@ -174,10 +169,10 @@ fig.text(0.01, 0.925, "Boyas IFOP y mortalidad de salmónidos de la comuna (Sern
          "enero 2024 a agosto 2026", ha="left", fontsize=9.5, color=TINTA_2)
 fig.tight_layout(rect=(0, 0, 1, 0.91))
 CARPETA_FIG.mkdir(exist_ok=True)
-fig.savefig(CARPETA_FIG / "05-oxigeno-profundo-vs-mortalidad.png", dpi=200, facecolor=FONDO)
+fig.savefig(CARPETA_FIG / "06-oxigeno-profundo-vs-mortalidad.png", dpi=200, facecolor=FONDO)
 
 # ---------------------------------------------------------------------------
-# 5. Figura 06: relación oxígeno profundo vs. mortalidad en las 5 boyas
+# 5. Figura 07: relación oxígeno profundo vs. mortalidad en las 5 boyas
 # ---------------------------------------------------------------------------
 orden = ["ACS1", "ACS17A", "ACS16", "ACS10A", "ACS11"]
 fig, ejes = plt.subplots(1, 5, figsize=(13, 3.6), sharey=True, facecolor=FONDO)
@@ -197,5 +192,5 @@ ejes[0].set_ylabel("Mortalidad ambiental (%)", color=TINTA_2, fontsize=9.5)
 fig.suptitle("Menos oxígeno profundo, más mortalidad ambiental: pasa en el continente, no en Chiloé",
              x=0.01, ha="left", fontsize=12, color=TINTA, fontweight="bold")
 fig.tight_layout(rect=(0, 0, 1, 0.93))
-fig.savefig(CARPETA_FIG / "06-oxigeno-vs-mortalidad-por-boya.png", dpi=200, facecolor=FONDO)
+fig.savefig(CARPETA_FIG / "07-oxigeno-vs-mortalidad-por-boya.png", dpi=200, facecolor=FONDO)
 print("Figuras guardadas en", CARPETA_FIG)
