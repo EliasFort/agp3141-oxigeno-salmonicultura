@@ -165,14 +165,14 @@ El agua más cálida retiene menos oxígeno, pero esa relación solo se ve con c
 ```{python}
 #| include: false
 def grafico_dispersion(boya):
-    d = horario[horario.boya == boya].dropna(subset=["temp_agua_prof", "oxigeno_mgl_prof"])
-    d = d.sample(min(len(d), 4000), random_state=1)  # muestra para que el HTML no pese demasiado
+    d = diario[diario.boya == boya].dropna(subset=["temp_agua_prof", "oxigeno_mgl_prof"])
     a, b = np.polyfit(d.temp_agua_prof, d.oxigeno_mgl_prof, 1)
     xs = np.linspace(d.temp_agua_prof.min(), d.temp_agua_prof.max(), 50)
     fig = go.Figure()
     fig.add_scatter(x=d.temp_agua_prof, y=d.oxigeno_mgl_prof, mode="markers",
-                    marker=dict(color=COLORES[boya], size=5, opacity=0.35), name="horas",
-                    hovertemplate="%{x:.1f} °C · %{y:.1f} mg/L<extra></extra>")
+                    marker=dict(color=COLORES[boya], size=6, opacity=0.5), name="días",
+                    customdata=d.fecha.dt.strftime("%d-%m-%Y"),
+                    hovertemplate="%{customdata}: %{x:.1f} °C · %{y:.1f} mg/L<extra></extra>")
     fig.add_scatter(x=xs, y=a * xs + b, mode="lines", line=dict(color="#0b0b0b", width=2),
                     name=f"recta, R² = {r2_boya[boya]:.2f}", hoverinfo="skip")
     fig.add_hline(y=UMBRAL, line_dash="dot", line_color="#52514e")
@@ -218,7 +218,7 @@ grafico_dispersion("ACS11").show()
 
 ::::
 
-Temperatura vs. oxígeno en profundidad (muestra de hasta 4.000 horas por boya).
+Temperatura vs. oxígeno en profundidad, promedios diarios.
 :::
 
 # Hallazgo 3: oxígeno bajo y mortalidad
